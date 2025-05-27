@@ -1,67 +1,76 @@
-import { useQuery } from 'convex/react';
-import { useEffect, useState } from 'react';
+import { useQuery, useMutation } from 'convex/react';
+import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 
-export function useConvexQuery<T>(query: any): {
+interface UseConvexQueryResult<T> {
     data: T | undefined;
     isLoading: boolean;
     error: Error | null;
-} {
-    const result = useQuery(query);
+}
+
+interface UseConvexMutationResult<TData = unknown, TArgs = any> {
+    mutate: (args?: TArgs) => Promise<TData>;
+    data: TData | undefined;
+    isLoading: boolean;
+    error: Error | null;
+}
+
+export const useConvexQuery = <T = unknown>(
+    query: Parameters<typeof useQuery>[0],
+    ...args: Parameters<typeof useQuery> extends [any, ...infer U] ? U : never
+): UseConvexQueryResult<T> => {
+    const result = useQuery(query, ...args) as T | undefined;
     const [data, setData] = useState<T | undefined>(undefined);
-    const [isLoading, setisLoading] = useState(true);
+    const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<Error | null>(null);
 
     useEffect(() => {
         if (result === undefined) {
-            setisLoading(true);
+            setIsLoading(true);
         } else {
             try {
                 setData(result);
                 setError(null);
             } catch (err) {
-                const error = err as Error;
-                setError(error);
-                toast.error(error.message);
+                setError(err as Error);
+                toast.error((err as Error).message);
             } finally {
-                setisLoading(false);
+                setIsLoading(false);
             }
         }
     }, [result]);
+
     return {
         data,
         isLoading,
         error,
     };
-}
+};
 
-export function useConvexMutation<TArgs extends any[], TResults>(
-    mutation: (...args: TArgs) => Promise<TResults>,
-): {
-    mutate: (...args: TArgs) => Promise<TResults | undefined>;
-    data: TResults | undefined;
-    isLoading: boolean;
-    error: Error | null;
-} {
-    const mutationFn = useQuery(mutation as any);
-    const [data, setData] = useState<TResults | undefined>(undefined);
-    const [isLoading, setisLoading] = useState(false);
+export const useConvexMutation = <TData = unknown, TArgs = any>(
+    mutation: Parameters<typeof useMutation>[0],
+): UseConvexMutationResult<TData, TArgs> => {
+    const mutationFn = useMutation(mutation);
+    const [data, setData] = useState<TData | undefined>(undefined);
+    const [isLoading, setIsLoading] = useState<boolean>(false);
     const [error, setError] = useState<Error | null>(null);
 
-    const mutate = async (...args: TArgs): Promise<TResults | undefined> => {
-        setisLoading(true);
+    const mutate = async (args?: TArgs): Promise<TData> => {
+        setIsLoading(true);
         setError(null);
+
         try {
-            const response = await mutationFn(...args);
+            const response = await mutationFn(args);
             setData(response);
             return response;
         } catch (err) {
-            const error = err as Error;
-            setError(error);
-            toast.error(error.message);
+            setError(err as Error);
+            toast.error(err instanceof Error ? err.message : String(err));
+            throw err;
         } finally {
-            setisLoading(false);
+            setIsLoading(false);
         }
     };
+
     return { mutate, data, isLoading, error };
-}
+};

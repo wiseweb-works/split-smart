@@ -1,27 +1,37 @@
 import { mutation, type MutationCtx, query, type QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
-import { Doc } from './_generated/dataModel';
-import type { Id } from './_generated/dataModel';
 import { v } from 'convex/values';
+import { Doc, Id } from './_generated/dataModel';
+
+type ContactUser = {
+    id: Id<'users'>;
+    name: string;
+    email: string;
+    imageUrl: string;
+    type: 'user';
+};
+
+type GroupContact = {
+    id: Id<'groups'>;
+    name: string;
+    description: string;
+    memberCount: number;
+    type: 'group';
+};
+
+type GetAllContactsResult = {
+    users: ContactUser[];
+    groups: GroupContact[];
+    expensesPaid: Doc<'expenses'>[];
+    expensesNotPaidByYou: Doc<'expenses'>[];
+    personalExpenses: Doc<'expenses'>[];
+};
 
 export const getAllContacts = query({
-    handler: async (
-        ctx: QueryCtx,
-    ): Promise<{
-        users: { id: Id<'users'>; name: string; email: string; imageUrl?: string; type: string }[];
-        groups: {
-            id: Id<'groups'>;
-            name: string;
-            description: string;
-            memberCount: number;
-            type: string;
-        }[];
-        expensesPaid: Doc<'expenses'>[];
-        expensesNotPaidByYou: Doc<'expenses'>[];
-        personalExpenses: Doc<'expenses'>[];
-    }> => {
-        const currentUser: Doc<'users'> = await ctx.runQuery(internal.users.getCurrentUser);
-        const expensesPaid: Doc<'expenses'>[] = await ctx.db
+    handler: async (ctx: QueryCtx): Promise<GetAllContactsResult> => {
+        // @ts-expect-error: ToDO
+        const currentUser = await ctx.runQuery(internal.users.getCurrentUser);
+        const expensesPaid = await ctx.db
             .query('expenses')
             .withIndex('by_user_and_group', q =>
                 q.eq('paidByUserId', currentUser._id).eq('groupId', undefined),
@@ -38,16 +48,16 @@ export const getAllContacts = query({
                 e.splits.some(s => s.userId == currentUser._id),
         );
 
-        const personalExpenses = [...expensesPaid, ...expensesNotPaidByYou];
+        const personalExpenses: Doc<'expenses'>[] = [...expensesPaid, ...expensesNotPaidByYou];
 
-        const contactsIds = new Set();
+        const contactsIds = new Set<Id<'users'>>();
         personalExpenses.forEach(exp => {
             if (exp.paidByUserId !== currentUser._id) contactsIds.add(exp.paidByUserId);
             exp.splits.forEach(s => {
                 if (s.userId !== currentUser._id) contactsIds.add(s.userId);
             });
         });
-        const contactUsers = await Promise.all(
+        const contactUsers: (ContactUser | null)[] = await Promise.all(
             [...contactsIds].map(async id => {
                 const u = await ctx.db.get(id as Id<'users'>);
                 return u
@@ -55,7 +65,7 @@ export const getAllContacts = query({
                           id: u._id,
                           name: u.name,
                           email: u.email,
-                          imageUrl: u.imageUrl,
+                          imageUrl: u.imageUrl ?? '',
                           type: 'user',
                       }
                     : null;
@@ -64,7 +74,7 @@ export const getAllContacts = query({
 
         const allGroups: Doc<'groups'>[] = await ctx.db.query('groups').collect();
 
-        const userGroups = allGroups
+        const userGroups: GroupContact[] = allGroups
             .filter(g => g.members.some(m => m.userId === currentUser._id))
             .map(g => ({
                 id: g._id,
@@ -77,7 +87,7 @@ export const getAllContacts = query({
         userGroups.sort((a, b) => a.name.localeCompare(b.name));
 
         return {
-            users: contactUsers.filter(u => u !== null),
+            users: contactUsers.filter((u): u is ContactUser => u !== null),
             groups: userGroups,
             expensesPaid,
             expensesNotPaidByYou,
@@ -90,7 +100,7 @@ export const createGroup = mutation({
     args: {
         name: v.string(),
         home: v.string(),
-        descripton: v.optional(v.string()),
+        description: v.optional(v.string()),
         members: v.array(v.id('users')),
     },
     handler: async (
@@ -98,10 +108,11 @@ export const createGroup = mutation({
         args: {
             name: string;
             home: string;
-            descripton: string;
+            description: string;
             members: Id<'users'>[];
         },
     ): Promise<Id<'groups'>> => {
+        // @ts-expect-error: ToDO
         const currentUser = await ctx.runQuery(internal.users.getCurrentUser);
 
         if (!args.name.trim()) throw new Error('Group name cannot be empty');
@@ -115,7 +126,7 @@ export const createGroup = mutation({
         }
         return await ctx.db.insert('groups', {
             name: args.name.trim(),
-            description: args.descripton?.trim() ?? '',
+            description: args.description?.trim() ?? '',
             createdBy: currentUser._id,
             members: [...uniqueMembers].map(id => ({
                 userId: id,

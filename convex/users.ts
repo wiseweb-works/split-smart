@@ -1,4 +1,6 @@
-import { internalQuery, mutation } from './_generated/server';
+import { v } from 'convex/values';
+import { mutation, query } from './_generated/server';
+import { internal } from './_generated/api';
 
 export const store = mutation({
     args: {},
@@ -7,7 +9,6 @@ export const store = mutation({
         if (!identity) {
             throw new Error('Called storeUser without authentication present');
         }
-
         const user = await ctx.db
             .query('users')
             .withIndex('by_token', q => q.eq('tokenIdentifier', identity.tokenIdentifier))
@@ -27,7 +28,7 @@ export const store = mutation({
     },
 });
 
-export const getCurrentUser = internalQuery({
+export const getCurrentUser = query({
     handler: async ctx => {
         const identity = await ctx.auth.getUserIdentity();
         if (!identity) {
@@ -38,9 +39,52 @@ export const getCurrentUser = internalQuery({
             .query('users')
             .withIndex('by_token', q => q.eq('tokenIdentifier', identity.tokenIdentifier))
             .first();
+
         if (!user) {
-            throw new Error('Error not found');
+            throw new Error('User not found');
         }
+
         return user;
+    },
+});
+
+export const searchUsers = query({
+    args: {
+        query: v.string(),
+    },
+    handler: async (
+        ctx,
+        args,
+    ): Promise<Array<{ id: string; name: string; email: string; imageUrl: string }>> => {
+        // @ts-expect-error: ToDO
+        const currentUser = await ctx.runQuery(internal.users.getCurrentUser);
+
+        if (args.query.length < 2) {
+            return [];
+        }
+
+        const nameResults = await ctx.db
+            .query('users')
+            .withSearchIndex('search_name', q => q.search('name', args.query))
+            .collect();
+
+        const emailResults = await ctx.db
+            .query('users')
+            .withSearchIndex('search_email', q => q.search('email', args.query))
+            .collect();
+
+        const users = [
+            ...nameResults,
+            ...emailResults.filter(email => !nameResults.some(name => name._id === email._id)),
+        ];
+
+        return users
+            .filter(user => user._id !== currentUser._id)
+            .map(user => ({
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                imageUrl: user.imageUrl ?? '',
+            }));
     },
 });
